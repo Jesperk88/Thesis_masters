@@ -10,3 +10,7 @@ data/
 __pycache__/
 *.pyc
 
+# Ignore Virtual Environments & Libraries
+.venv/
+venv/
+env/
