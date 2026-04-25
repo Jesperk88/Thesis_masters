@@ -17,6 +17,7 @@ import numpy as np
 # Import your custom modules
 from dataset import DQAImpressionDataset, load_embedding_map
 from models_final import DualTowerPAL
+from splits import get_session_split_indices
 
 # --- Hyperparameters ---
 BATCH_SIZE = 256
@@ -33,15 +34,18 @@ def train_dqa_model():
 
     # 2. Load Data
     embedding_map = load_embedding_map("data/embeddings_map.pkl")
-    full_dataset = DQAImpressionDataset("data/dqa_merged_text.parquet", embedding_map)
+    
 
     # 3. Create Train/Validation Split (90/10)
-    val_size = int(len(full_dataset) * VAL_SPLIT)
-    train_size = len(full_dataset) - val_size
-    train_dataset, val_dataset = random_split(
-        full_dataset, [train_size, val_size], 
-        generator=torch.Generator().manual_seed(42)
-    )
+    parquet_path = "data/dqa_merged_text.parquet"
+
+    train_idx, val_idx = get_session_split_indices(parquet_path)
+
+    train_dataset = DQAImpressionDataset(parquet_path, embedding_map, indices=train_idx)
+    val_dataset = DQAImpressionDataset(parquet_path, embedding_map, indices=val_idx)
+
+    train_size = len(train_dataset)
+    val_size = len(val_dataset)
 
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)

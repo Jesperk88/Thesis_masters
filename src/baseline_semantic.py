@@ -15,6 +15,7 @@ import torch
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score, log_loss
 import os
+from splits import get_session_split_indices
 
 # Set random seed to guarantee identical splits to PyTorch models
 SEED = 42
@@ -53,19 +54,18 @@ def get_semantic_lr_data(parquet_path: str, emb_map: dict):
     positions = df["position"].to_numpy()
     is_left = df["is_left_column"].cast(pl.Float32).to_numpy()
     labels = df["click"].to_numpy()
+    sessions = df["session_idx"].to_numpy()
 
     X = np.column_stack((cos_sims, positions, is_left))
-    return X, labels
+    return X, labels, sessions
 
-def train_and_save_lr(X, y, env_name):
+def train_and_save_lr(X, y, parquet_path, env_name):
     # Replicate the exact 90/10 split logic used in PyTorch random_split
     dataset_len = len(y)
     val_size = int(dataset_len * 0.1)
     train_size = dataset_len - val_size
     
-    indices = torch.randperm(dataset_len, generator=torch.Generator().manual_seed(SEED)).tolist()
-    train_indices = indices[:train_size]
-    val_indices = indices[train_size:]
+    train_indices, val_indices = get_session_split_indices(parquet_path)
 
     X_train, y_train = X[train_indices], y[train_indices]
     X_val, y_val = X[val_indices], y[val_indices]
@@ -96,10 +96,12 @@ if __name__ == "__main__":
     emb_map = load_embedding_map("data/embeddings_map.pkl")
     
     # Standard Environment
-    X_std, y_std = get_semantic_lr_data("data/train_merged_text.parquet", emb_map)
-    train_and_save_lr(X_std, y_std, "Standard")
+    std_path = "data/train_merged_text.parquet"
+    X_std, y_std, _ = get_semantic_lr_data(std_path, emb_map)
+    train_and_save_lr(X_std, y_std, std_path, "Standard")
     
     # DQA Environment
-    X_dqa, y_dqa = get_semantic_lr_data("data/dqa_merged_text.parquet", emb_map)
-    train_and_save_lr(X_dqa, y_dqa, "DQA")
+    dqa_path = "data/dqa_merged_text.parquet"
+    X_dqa, y_dqa, _ = get_semantic_lr_data(dqa_path, emb_map)
+    train_and_save_lr(X_dqa, y_dqa, dqa_path, "DQA")
     print("\nPhase 5 Complete. Semantic Baselines created.")

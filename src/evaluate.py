@@ -20,19 +20,21 @@ from sklearn.metrics import roc_auc_score, log_loss
 # Import custom architecture
 from dataset import StandardImpressionDataset, DQAImpressionDataset, load_embedding_map
 from models_final import DualTowerPAL
+from splits import get_session_split_indices
 
 VAL_SPLIT = 0.1
 BATCH_SIZE = 2048
 
-def get_val_loader(dataset):
-    """Recreates the exact validation split used in training."""
-    val_size = int(len(dataset) * VAL_SPLIT)
-    train_size = len(dataset) - val_size
-    _, val_dataset = random_split(
-        dataset, [train_size, val_size], 
-        generator=torch.Generator().manual_seed(42)
-    )
-    return DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
+def get_val_loader_standard(parquet_path, emb_map):
+    _, val_idx = get_session_split_indices(parquet_path)
+    dataset = StandardImpressionDataset(parquet_path, emb_map, indices=val_idx)
+    return DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False)
+
+
+def get_val_loader_dqa(parquet_path, emb_map):
+    _, val_idx = get_session_split_indices(parquet_path)
+    dataset = DQAImpressionDataset(parquet_path, emb_map, indices=val_idx)
+    return DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False)
 
 def evaluate_environment(env_name, model_pal, model_lr, loader, device, is_dqa=False):
     model_pal.eval()
@@ -114,7 +116,7 @@ def extract_and_plot_curves(pal_std, pal_dqa, emb_map, device):
 
     plt.title("Neural Network's Internal Representation of Examination Bias", fontsize=16, pad=20)
     plt.xlabel("Organic Rank Position", fontsize=12)
-    plt.ylabel("Learned Absolute Examination Probability $P(E)$", fontsize=12)
+    plt.ylabel("Learned Examination Probability $P(E)$", fontsize=12)
     plt.xticks(range(1, 11))
     plt.ylim(0, 1.1)
     plt.legend(fontsize=12)
@@ -131,11 +133,11 @@ if __name__ == "__main__":
 
     # 1. Load Embeddings and Datasets
     emb_map = load_embedding_map("data/embeddings_map.pkl")
-    dataset_std = StandardImpressionDataset("data/train_merged_text.parquet", emb_map)
-    dataset_dqa = DQAImpressionDataset("data/dqa_merged_text.parquet", emb_map)
+    std_path = "data/train_merged_text.parquet"
+    dqa_path = "data/dqa_merged_text.parquet"
 
-    loader_std = get_val_loader(dataset_std)
-    loader_dqa = get_val_loader(dataset_dqa)
+    loader_std = get_val_loader_standard(std_path, emb_map)
+    loader_dqa = get_val_loader_dqa(dqa_path, emb_map)
 
     # 2. Load the trained PAL models
     pal_std = DualTowerPAL(use_dqa=False).to(device)

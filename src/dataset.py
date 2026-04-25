@@ -36,11 +36,14 @@ class StandardImpressionDataset(Dataset):
       - is_left_col : (1,)   float tensor  [1.0 = left, 0.0 = right]
       - label       : (1,)   float tensor  [click = 1, no click = 0]
     """
-    def __init__(self, parquet_path: str, embedding_map: dict):
+    def __init__(self, parquet_path: str, embedding_map: dict, indices=None):
         print(f"Loading Standard dataset from {parquet_path}...")
         self.df = pl.read_parquet(parquet_path)
         self.query_map = embedding_map["query"]
         self.item_map  = embedding_map["item"]
+
+        if indices is not None:
+            self.df = self.df[indices]
 
         # Pre-extract columns as lists for O(1) indexing during __getitem__
         self.queries    = self.df["query"].to_list()
@@ -76,13 +79,15 @@ class DQAImpressionDataset(Dataset):
     Identical to StandardImpressionDataset but additionally returns:
       - dqa_emb : (768,) float tensor — embedding of the DQA module output text
     """
-    def __init__(self, parquet_path: str, embedding_map: dict):
+    def __init__(self, parquet_path: str, embedding_map: dict, indices=None):
         print(f"Loading DQA dataset from {parquet_path}...")
         self.df = pl.read_parquet(parquet_path)
         self.query_map = embedding_map["query"]
         self.item_map  = embedding_map["item"]
         self.dqa_map   = embedding_map["dqa"]
 
+        if indices is not None:
+            self.df = self.df[indices]
         # Pre-extract columns
         self.queries   = self.df["query"].to_list()
         self.note_idxs = self.df["note_idx"].to_list()
