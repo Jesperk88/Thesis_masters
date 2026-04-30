@@ -1,13 +1,16 @@
 """
 splits.py
 ---------
-Session-level train/validation split utilities.
-Ensures all impressions from the same search session stay in the same split.
+Random impression-level train/validation split utilities.
+
+Creates a reproducible 90/10 split after the data has been flattened to the
+impression level. This is used consistently for the logistic regression
+baselines and PAL models.
 """
 
 import numpy as np
 import polars as pl
-from sklearn.model_selection import GroupShuffleSplit
+from sklearn.model_selection import train_test_split
 
 SEED = 42
 VAL_SPLIT = 0.1
@@ -15,24 +18,21 @@ VAL_SPLIT = 0.1
 
 def get_session_split_indices(parquet_path: str, val_size: float = VAL_SPLIT, seed: int = SEED):
     """
-    Returns train_idx, val_idx for a session-level split.
-    Groups by session_idx so impressions from the same session cannot appear
-    in both training and validation.
+    Returns train_idx, val_idx for a random impression-level split.
+
+    The function name is kept the same so existing scripts do not need to be
+    changed. Unlike the previous version, this does NOT group by session_idx.
     """
     df = pl.read_parquet(parquet_path)
 
-    if "session_idx" not in df.columns:
-        raise ValueError(f"session_idx not found in {parquet_path}")
-
-    groups = df["session_idx"].to_numpy()
     row_indices = np.arange(len(df))
 
-    splitter = GroupShuffleSplit(
-        n_splits=1,
+    train_idx, val_idx = train_test_split(
+        row_indices,
         test_size=val_size,
-        random_state=seed
+        random_state=seed,
+        shuffle=True,
+        stratify=None
     )
-
-    train_idx, val_idx = next(splitter.split(row_indices, groups=groups))
 
     return train_idx, val_idx
