@@ -2,17 +2,17 @@
 evaluate.py
 -----------
 Final Metrics & Curve Extraction.
-Evaluates the PAL Models and Semantic Logistic Regression baselines on the 
-exact same validation batches to guarantee fair comparison.
+Evaluates the Standard models on held-out search_test and the DQA-present
+models on the same internal DQA validation split used during training.
 
 Extracts the learned Position Bias curve from the PAL examination pathway
-and outputs it as 'Fig_4_learned_bias_comparison.pdf'.
+and outputs it as 'Fig_4_learned_bias_true_layout.pdf'.
 """
 
 import pickle
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_auc_score, log_loss
@@ -25,9 +25,8 @@ from splits import get_session_split_indices
 VAL_SPLIT = 0.1
 BATCH_SIZE = 2048
 
-def get_val_loader_standard(parquet_path, emb_map):
-    _, val_idx = get_session_split_indices(parquet_path)
-    dataset = StandardImpressionDataset(parquet_path, emb_map, indices=val_idx)
+def get_test_loader_standard(parquet_path, emb_map):
+    dataset = StandardImpressionDataset(parquet_path, emb_map)
     return DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False)
 
 
@@ -70,6 +69,12 @@ def evaluate_environment(env_name, model_pal, model_lr, loader, device, is_dqa=F
             
             # Reconstruct the feature matrix for LR
             X_lr = np.column_stack((cos_sim, pos_np, col_np))
+            X_lr = np.nan_to_num(
+                X_lr.astype(np.float64),
+                nan=0.0,
+                posinf=0.0,
+                neginf=0.0,
+            )
             lr_batch_preds = model_lr.predict_proba(X_lr)[:, 1]
 
             all_labels.extend(labels.cpu().numpy().flatten())
@@ -133,10 +138,10 @@ if __name__ == "__main__":
 
     # 1. Load Embeddings and Datasets
     emb_map = load_embedding_map("data/embeddings_map.pkl")
-    std_path = "data/train_merged_text.parquet"
+    std_test_path = "data/test_merged_text.parquet"
     dqa_path = "data/dqa_merged_text.parquet"
 
-    loader_std = get_val_loader_standard(std_path, emb_map)
+    loader_std = get_test_loader_standard(std_test_path, emb_map)
     loader_dqa = get_val_loader_dqa(dqa_path, emb_map)
 
     # 2. Load the trained PAL models
