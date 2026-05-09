@@ -9,6 +9,7 @@ Extracts the learned Position Bias curve from the PAL examination pathway
 and outputs it as 'Fig_4_learned_bias_true_layout.pdf'.
 """
 
+import csv
 import pickle
 import torch
 import torch.nn.functional as F
@@ -24,6 +25,8 @@ from splits import get_session_split_indices
 
 VAL_SPLIT = 0.1
 BATCH_SIZE = 2048
+LEARNED_BIAS_CSV = "Fig_4_learned_bias_values.csv"
+LEARNED_BIAS_TEX = "Fig_4_learned_bias_values.tex"
 
 def get_test_loader_standard(parquet_path, emb_map):
     dataset = StandardImpressionDataset(parquet_path, emb_map)
@@ -49,12 +52,14 @@ def evaluate_environment(env_name, model_pal, model_lr, loader, device, is_dqa=F
             q_emb = batch["query_emb"].to(device)
             i_emb = batch["item_emb"].to(device)
             pos = batch["position"].to(device)
+            # The PAL embedding is capped at MAX_POSITION; LR still uses raw positions below.
+            pal_pos = pos.clamp(max=model_pal.position_embedding.num_embeddings - 1)
             col = batch["is_left_col"].to(device)
             labels = batch["label"].to(device)
             
             inputs = {
                 "query_emb": q_emb, "item_emb": i_emb, 
-                "position": pos, "is_left_col": col
+                "position": pal_pos, "is_left_col": col
             }
             if is_dqa:
                 inputs["dqa_emb"] = batch["dqa_emb"].to(device)
@@ -89,27 +94,95 @@ def evaluate_environment(env_name, model_pal, model_lr, loader, device, is_dqa=F
 
     return (lr_auc, lr_loss), (pal_auc, pal_loss)
 
+def build_learned_bias_table(positions, p_e_std, p_e_dqa):
+    return [
+        {
+            "Position": int(position),
+            "Standard P(E)": float(std_value),
+            "DQA P(E)": float(dqa_value),
+        }
+        for position, std_value, dqa_value in zip(positions, p_e_std, p_e_dqa)
+    ]
+
+
+def save_learned_bias_table(rows, csv_path=LEARNED_BIAS_CSV, tex_path=LEARNED_BIAS_TEX):
+    headers = ["Position", "Standard P(E)", "DQA P(E)"]
+
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(headers)
+        for row in rows:
+            writer.writerow([
+                row["Position"],
+                f"{row['Standard P(E)']:.6f}",
+                f"{row['DQA P(E)']:.6f}",
+            ])
+
+    latex_lines = [
+        "\\begin{table}[htbp]",
+        "\\centering",
+        "\\caption{Learned examination bias values extracted from Figure 4.}",
+        "\\label{tab:learned-bias-values}",
+        "\\begin{tabular}{rcc}",
+        "\\hline",
+        "Position & Standard $P(E)$ & DQA $P(E)$ \\\\",
+        "\\hline",
+    ]
+    for row in rows:
+        latex_lines.append(
+            f"{row['Position']} & {row['Standard P(E)']:.4f} & {row['DQA P(E)']:.4f} \\\\"
+        )
+    latex_lines.extend([
+        "\\hline",
+        "\\end{tabular}",
+        "\\end{table}",
+        "",
+    ])
+    with open(tex_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(latex_lines))
+
+    print("\nLearned bias values table")
+    print("-" * 52)
+    print(f"{headers[0]:<10} | {headers[1]:<14} | {headers[2]:<10}")
+    print("-" * 52)
+    for row in rows:
+        print(
+            f"{row['Position']:<10} | "
+            f"{row['Standard P(E)']:<14.6f} | "
+            f"{row['DQA P(E)']:<10.6f}"
+        )
+    print("-" * 52)
+    print(f"Saved learned bias values to {csv_path} and {tex_path}")
+
+
 def extract_and_plot_curves(pal_std, pal_dqa, emb_map, device):
     print("Extracting internal P(E) representations for Figure 4...")
-    
-    # 1. Dummy Layout Setup: Positions 1 through 10, Left Column
-    pos_dummy = torch.arange(1, 11, dtype=torch.long).unsqueeze(1).to(device) # Shape (10, 1)
-    col_dummy = (pos_dummy % 2 != 0).float().to(device)             # Shape (10, 1)
-    
-    # 2. Extract Standard P(E)
-    pos_emb_std = pal_std.position_embedding(pos_dummy.squeeze(-1))
-    exam_in_std = torch.cat([pos_emb_std, col_dummy], dim=-1)
-    p_e_std = pal_std.examination_tower(exam_in_std).detach().cpu().numpy().flatten()
+    pal_std.eval()
+    pal_dqa.eval()
 
-    # 3. Extract DQA P(E)
-    # Get the average semantic space of a DQA response
-    all_dqa_vecs = list(emb_map['dqa'].values())
-    avg_dqa_vec = np.mean(all_dqa_vecs, axis=0)
-    dqa_tensor = torch.tensor(avg_dqa_vec, dtype=torch.float32).unsqueeze(0).repeat(10, 1).to(device)
+    with torch.no_grad():
+        # 1. Dummy Layout Setup: positions 1 through 10 in the two-column layout.
+        # Odd ranks are left-column results; even ranks are right-column results.
+        pos_dummy = torch.arange(1, 11, dtype=torch.long).unsqueeze(1).to(device) # Shape (10, 1)
+        col_dummy = (pos_dummy % 2 != 0).float().to(device)             # Shape (10, 1)
 
-    pos_emb_dqa = pal_dqa.position_embedding(pos_dummy.squeeze(-1))
-    exam_in_dqa = torch.cat([pos_emb_dqa, col_dummy, dqa_tensor], dim=-1)
-    p_e_dqa = pal_dqa.examination_tower(exam_in_dqa).detach().cpu().numpy().flatten()
+        # 2. Extract Standard P(E)
+        pos_emb_std = pal_std.position_embedding(pos_dummy.squeeze(-1))
+        exam_in_std = torch.cat([pos_emb_std, col_dummy], dim=-1)
+        p_e_std = pal_std.examination_tower(exam_in_std).cpu().numpy().flatten()
+
+        # 3. Extract DQA P(E)
+        # Get the average semantic space of a DQA response
+        all_dqa_vecs = list(emb_map['dqa'].values())
+        avg_dqa_vec = np.mean(all_dqa_vecs, axis=0)
+        dqa_tensor = torch.tensor(avg_dqa_vec, dtype=torch.float32).unsqueeze(0).repeat(10, 1).to(device)
+
+        pos_emb_dqa = pal_dqa.position_embedding(pos_dummy.squeeze(-1))
+        exam_in_dqa = torch.cat([pos_emb_dqa, col_dummy, dqa_tensor], dim=-1)
+        p_e_dqa = pal_dqa.examination_tower(exam_in_dqa).cpu().numpy().flatten()
+
+    positions = pos_dummy.cpu().numpy().flatten()
+    learned_bias_table = build_learned_bias_table(positions, p_e_std, p_e_dqa)
 
     # 4. Generate the Thesis Graph
     plt.figure(figsize=(10, 6))
@@ -130,7 +203,10 @@ def extract_and_plot_curves(pal_std, pal_dqa, emb_map, device):
     # Save exactly as required for the thesis LaTeX
     file_name = 'Fig_4_learned_bias_true_layout.pdf'
     plt.savefig(file_name, bbox_inches='tight')
+    plt.close()
     print(f"Saved learned bias curve to {file_name}")
+    save_learned_bias_table(learned_bias_table)
+    return learned_bias_table
 
 if __name__ == "__main__":
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
