@@ -6,11 +6,17 @@ Evaluates the Standard models on held-out search_test and the DQA-present
 models on the same internal DQA validation split used during training.
 
 Extracts the learned Position Bias curve from the PAL examination pathway
-and outputs it as 'Fig_4_learned_bias_true_layout.pdf'.
+and outputs it as 'figures/Fig_4_learned_bias_true_layout.pdf'.
 """
 
 import csv
+import os
 import pickle
+from pathlib import Path
+
+# macOS conda environments can load OpenMP twice through torch/sklearn.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -25,8 +31,28 @@ from splits import get_session_split_indices
 
 VAL_SPLIT = 0.1
 BATCH_SIZE = 2048
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+FIGURES_DIR = PROJECT_ROOT / "figures"
 LEARNED_BIAS_CSV = "Fig_4_learned_bias_values.csv"
 LEARNED_BIAS_TEX = "Fig_4_learned_bias_values.tex"
+FIGURE_SIZE = (10, 6)
+AXIS_LABEL_SIZE = 16
+TICK_LABEL_SIZE = 14
+LEGEND_FONT_SIZE = 14
+LINE_WIDTH = 2
+MARKER_SIZE = 7
+GRID_ALPHA = 0.5
+EXPORT_DPI = 300
+THESIS_RC = {
+    "font.size": TICK_LABEL_SIZE,
+    "axes.labelsize": AXIS_LABEL_SIZE,
+    "axes.titlesize": AXIS_LABEL_SIZE,
+    "xtick.labelsize": TICK_LABEL_SIZE,
+    "ytick.labelsize": TICK_LABEL_SIZE,
+    "legend.fontsize": LEGEND_FONT_SIZE,
+    "legend.title_fontsize": LEGEND_FONT_SIZE,
+}
+plt.rcParams.update(THESIS_RC)
 
 def get_test_loader_standard(parquet_path, emb_map):
     dataset = StandardImpressionDataset(parquet_path, emb_map)
@@ -185,24 +211,25 @@ def extract_and_plot_curves(pal_std, pal_dqa, emb_map, device):
     learned_bias_table = build_learned_bias_table(positions, p_e_std, p_e_dqa)
 
     # 4. Generate the Thesis Graph
-    plt.figure(figsize=(10, 6))
+    plt.figure(figsize=FIGURE_SIZE)
     
-    plt.plot(range(1, 11), p_e_std, marker='o', markersize=8, 
-             linestyle='-', linewidth=2, color='#008080', label='Learned: Standard Layout')
-    plt.plot(range(1, 11), p_e_dqa, marker='s', markersize=8, 
-             linestyle='--', linewidth=2, color='#D11141', label='Learned: DQA-Present')
+    plt.plot(range(1, 11), p_e_std, marker='o', markersize=MARKER_SIZE,
+             linestyle='-', linewidth=LINE_WIDTH, color='#008080', label='Learned: Standard Layout')
+    plt.plot(range(1, 11), p_e_dqa, marker='s', markersize=MARKER_SIZE,
+             linestyle='--', linewidth=LINE_WIDTH, color='#D11141', label='Learned: DQA-Present')
 
-    plt.title("Learned Examination Bias Under the Two-Column Layout", fontsize=16, pad=20)
-    plt.xlabel("Organic Rank Position", fontsize=12)
-    plt.ylabel("Learned Examination Probability $P(E)$", fontsize=12)
-    plt.xticks(range(1, 11))
+    plt.xlabel("Organic Rank Position", fontsize=AXIS_LABEL_SIZE)
+    plt.ylabel("Learned Examination Probability $P(E)$", fontsize=AXIS_LABEL_SIZE)
+    plt.xticks(range(1, 11), fontsize=TICK_LABEL_SIZE)
+    plt.yticks(fontsize=TICK_LABEL_SIZE)
     plt.ylim(0, 1.1)
-    plt.legend(fontsize=12)
-    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.legend(fontsize=LEGEND_FONT_SIZE)
+    plt.grid(True, linestyle='--', alpha=GRID_ALPHA)
 
     # Save exactly as required for the thesis LaTeX
-    file_name = 'Fig_4_learned_bias_true_layout.pdf'
-    plt.savefig(file_name, bbox_inches='tight')
+    FIGURES_DIR.mkdir(exist_ok=True)
+    file_name = FIGURES_DIR / 'Fig_4_learned_bias_true_layout.pdf'
+    plt.savefig(file_name, bbox_inches='tight', dpi=EXPORT_DPI)
     plt.close()
     print(f"Saved learned bias curve to {file_name}")
     save_learned_bias_table(learned_bias_table)
